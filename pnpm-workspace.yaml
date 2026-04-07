@@ -1,0 +1,40 @@
+packages:
+  - "packages/*"
+  - "tools/*"
+
+allowBuilds:
+  '@swc/core': true
+  esbuild: true
+  nx: true
+  svelte-preprocess: true
+
+catalog:
+  # AI
+  '@anthropic-ai/sdk': ^0.27.0
+
+  # Audio
+  tone: ^15.0.4
+
+  # Nx
+  nx: ^21.0.0
+  '@nx/js': ^21.0.0
+  '@nx/vite': ^21.0.0
+  '@nxext/sveltekit': ^21.0.0
+
+  # Svelte / Vite
+  svelte: ^4.2.0
+  svelte-check: ^3.7.0
+  '@sveltejs/kit': ^2.5.0
+  '@sveltejs/adapter-static': ^3.0.0
+  '@sveltejs/vite-plugin-svelte': ^3.1.0
+  vite: ^5.2.0
+  vite-plugin-wasm: ^3.3.0
+  vite-plugin-top-level-await: ^1.4.0
+
+  # Tooling
+  typescript: ^5.4.0
+  oxlint: ^0.4.0
+
+  # Testing
+  vitest: ^2.0.0
+  '@vitest/ui': ^2.0.0

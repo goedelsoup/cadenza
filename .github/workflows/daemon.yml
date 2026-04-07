@@ -1,0 +1,75 @@
+name: cadenza-daemon
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/cadenza-daemon/**'
+      - 'packages/cadenza-ipc/**'
+      - 'packages/cadenza-theory/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/daemon.yml'
+  pull_request:
+    paths:
+      - 'packages/cadenza-daemon/**'
+      - 'packages/cadenza-ipc/**'
+      - 'packages/cadenza-theory/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/daemon.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install ALSA dev headers (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-daemon-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-daemon-
+
+      - name: Build cadenza-ipc
+        run: cargo build -p cadenza-ipc
+
+      - name: Build cadenza-daemon
+        run: cargo build -p cadenza-daemon
+
+      - name: Test cadenza-ipc
+        run: cargo test -p cadenza-ipc
+
+      - name: Test cadenza-daemon
+        # Audio-device tests are gated behind the `audio-device-tests`
+        # feature so they don't try to open a real output device on
+        # headless CI runners. Run only the safe subset here.
+        run: cargo test -p cadenza-daemon
+
+      - name: Clippy (cadenza-ipc + cadenza-daemon)
+        run: cargo clippy -p cadenza-ipc -p cadenza-daemon --all-targets --no-deps -- -D warnings

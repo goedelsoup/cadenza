@@ -1,0 +1,22 @@
+{
+  "name": "cadenza-musicxml",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "root": "packages/cadenza-musicxml",
+  "tags": ["lang:rust", "scope:core"],
+  "implicitDependencies": ["cadenza-theory"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": { "command": "mise exec -- cargo build -p cadenza-musicxml --release", "cwd": "." }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "mise exec -- cargo test -p cadenza-musicxml", "cwd": "." }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": { "command": "mise exec -- cargo clippy -p cadenza-musicxml -- -D warnings", "cwd": "." }
+    }
+  }
+}

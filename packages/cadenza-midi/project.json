@@ -1,0 +1,22 @@
+{
+  "name": "cadenza-midi",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "root": "packages/cadenza-midi",
+  "tags": ["lang:rust", "scope:core"],
+  "implicitDependencies": ["cadenza-theory"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": { "command": "mise exec -- cargo build -p cadenza-midi --release", "cwd": "." }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "mise exec -- cargo test -p cadenza-midi", "cwd": "." }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": { "command": "mise exec -- cargo clippy -p cadenza-midi -- -D warnings", "cwd": "." }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compileOnSave": false,
+  "compilerOptions": {
+    "rootDir": ".",
+    "sourceMap": true,
+    "declaration": true,
+    "moduleResolution": "bundler",
+    "module": "ESNext",
+    "target": "ESNext",
+    "lib": ["ESNext", "DOM"],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@cadenza/types":   ["packages/cadenza-types/src/index.ts"],
+      "@cadenza/session": ["packages/cadenza-session/src/index.ts"],
+      "@cadenza/api":     ["packages/cadenza-api/src/index.ts"],
+      "@cadenza/wasm":    ["packages/cadenza-wasm/dist/wasm/cadenza_wasm.js"]
+    }
+  },
+  "exclude": ["node_modules", "**/node_modules", "**/dist"]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@cadenza/player",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@cadenza/api":   "workspace:*",
+    "@cadenza/types": "workspace:*",
+    "tone":           "catalog:"
+  },
+  "devDependencies": {
+    "vitest":     "catalog:",
+    "typescript": "catalog:",
+    "oxlint":     "catalog:"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "cadenza",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AI-assisted songwriting workstation",
+  "packageManager": "pnpm@10.33.0",
+  "engines": { "node": ">=20", "pnpm": ">=10" },
+  "scripts": {
+    "dev":    "nx run cadenza-web:dev",
+    "build":  "nx run-many -t build",
+    "test":   "nx run-many -t test",
+    "lint":   "nx run-many -t lint",
+    "clean":  "nx reset && find . -name 'dist' -not -path '*/node_modules/*' | xargs rm -rf"
+  },
+  "devDependencies": {
+    "nx":                 "catalog:",
+    "@nx/js":             "catalog:",
+    "@nx/vite":           "catalog:",
+    "@nxext/sveltekit":   "catalog:",
+    "oxlint":             "catalog:",
+    "typescript":         "catalog:"
+  }
+}

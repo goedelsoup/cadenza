@@ -1,0 +1,25 @@
+[package]
+name        = "cadenza-wasm"
+description = "wasm-bindgen surface layer for cadenza-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+cadenza-theory   = { path = "../cadenza-theory",   features = ["std"] }
+cadenza-midi     = { path = "../cadenza-midi" }
+cadenza-musicxml = { path = "../cadenza-musicxml" }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+wasm-bindgen     = { workspace = true }
+js-sys           = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+
+[profile.release]
+opt-level = "s"
+lto       = true

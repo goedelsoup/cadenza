@@ -1,0 +1,30 @@
+{
+  "name": "cadenza-theory",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "root": "packages/cadenza-theory",
+  "tags": ["lang:rust", "scope:core"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "mise exec -- cargo build -p cadenza-theory --release",
+        "cwd": "."
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "mise exec -- cargo test -p cadenza-theory",
+        "cwd": "."
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "mise exec -- cargo clippy -p cadenza-theory -- -D warnings",
+        "cwd": "."
+      }
+    }
+  }
+}

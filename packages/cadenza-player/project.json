@@ -1,0 +1,18 @@
+{
+  "name": "cadenza-player",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "root": "packages/cadenza-player",
+  "tags": ["lang:ts", "scope:shared"],
+  "implicitDependencies": ["cadenza-types"],
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": { "command": "oxlint src", "cwd": "packages/cadenza-player" }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "vitest run", "cwd": "packages/cadenza-player" }
+    }
+  }
+}

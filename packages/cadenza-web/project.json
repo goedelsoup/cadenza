@@ -1,0 +1,30 @@
+{
+  "name": "cadenza-web",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "root": "packages/cadenza-web",
+  "sourceRoot": "packages/cadenza-web/src",
+  "tags": ["lang:ts", "scope:app", "framework:svelte"],
+  "implicitDependencies": ["cadenza-types", "cadenza-session", "cadenza-api", "cadenza-wasm"],
+  "targets": {
+    "dev": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["cadenza-wasm:wasm:build:dev"],
+      "options": { "command": "pnpm dev", "cwd": "packages/cadenza-web" }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["^build", "cadenza-wasm:wasm:build"],
+      "outputs": ["{projectRoot}/dist"],
+      "options": { "command": "pnpm build", "cwd": "packages/cadenza-web" }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "pnpm test", "cwd": "packages/cadenza-web" }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": { "command": "pnpm lint", "cwd": "packages/cadenza-web" }
+    }
+  }
+}

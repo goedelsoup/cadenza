@@ -1,0 +1,22 @@
+{
+  "name": "cadenza-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "wasm:build": "wasm-pack build ../crates/cadenza-wasm --target web --out-dir ../../web/src/wasm",
+    "wasm:dev": "wasm-pack build ../crates/cadenza-wasm --target web --out-dir ../../web/src/wasm --dev"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.27.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0",
+    "vite-plugin-wasm": "^3.3.0",
+    "vite-plugin-top-level-await": "^1.4.0"
+  }
+}

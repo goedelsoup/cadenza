@@ -1,0 +1,51 @@
+{
+  "name": "cadenza-daemon",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "root": "packages/cadenza-daemon",
+  "tags": ["lang:rust", "scope:daemon"],
+  "implicitDependencies": ["cadenza-theory", "cadenza-ipc"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/src/**/*.rs",
+        "{projectRoot}/Cargo.toml"
+      ],
+      "outputs": ["{workspaceRoot}/target/release/cadenza-daemon"],
+      "options": {
+        "command": "mise exec -- cargo build -p cadenza-daemon --release",
+        "cwd": "."
+      }
+    },
+    "build:dev": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "mise exec -- cargo build -p cadenza-daemon",
+        "cwd": "."
+      }
+    },
+    "run": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "mise exec -- cargo run -p cadenza-daemon --release",
+        "cwd": "."
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "mise exec -- cargo test -p cadenza-daemon",
+        "cwd": "."
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "mise exec -- cargo clippy -p cadenza-daemon -- -D warnings",
+        "cwd": "."
+      }
+    }
+  }
+}

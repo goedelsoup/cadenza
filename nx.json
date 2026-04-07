@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "nxCloudId": "",
+  "defaultBase": "main",
+  "targetDefaults": {
+    "build": {
+      "dependsOn": ["^build"],
+      "cache": true,
+      "outputs": ["{projectRoot}/dist"]
+    },
+    "wasm:build": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/src/**/*.rs",
+        "{projectRoot}/Cargo.toml"
+      ],
+      "outputs": ["{projectRoot}/dist/wasm"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "cache": true
+    },
+    "lint": {
+      "cache": true
+    },
+    "dev": {
+      "dependsOn": ["cadenza-wasm:wasm:build"]
+    }
+  },
+  "plugins": [],
+  "workspaceLayout": {
+    "appsDir":  "packages",
+    "libsDir":  "packages"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "name": "cadenza-wasm",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "root": "packages/cadenza-wasm",
+  "tags": ["lang:rust", "scope:wasm"],
+  "implicitDependencies": ["cadenza-theory", "cadenza-midi", "cadenza-musicxml"],
+  "targets": {
+    "wasm:build": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/src/**/*.rs",
+        "{projectRoot}/Cargo.toml",
+        { "dependentTasksOutputFiles": "**/*.rs" }
+      ],
+      "outputs": ["{projectRoot}/dist/wasm"],
+      "options": {
+        "command": "mise exec -- wasm-pack build packages/cadenza-wasm --target web --out-dir {projectRoot}/dist/wasm --release",
+        "cwd": "."
+      }
+    },
+    "wasm:build:dev": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "mise exec -- wasm-pack build packages/cadenza-wasm --target web --out-dir {projectRoot}/dist/wasm --dev",
+        "cwd": "."
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["wasm:build"],
+      "options": {
+        "command": "echo 'cadenza-wasm built via wasm:build'",
+        "cwd": "."
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "mise exec -- cargo clippy -p cadenza-wasm -- -D warnings",
+        "cwd": "."
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "mise exec -- cargo test -p cadenza-wasm",
+        "cwd": "."
+      }
+    }
+  }
+}

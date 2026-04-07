@@ -1,0 +1,11 @@
+[package]
+name        = "cadenza-ipc"
+description = "Shared IPC message types for the cadenza daemon and frontend bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cadenza-theory = { path = "../cadenza-theory", features = ["std"] }
+serde          = { workspace = true }
+serde_json     = { workspace = true }

@@ -1,0 +1,62 @@
+[tools]
+rust = "stable"
+node = "22"
+
+[env]
+PATH = "{{env.HOME}}/.cargo/bin:{{env.PATH}}"
+WASM_PACK_CACHE = "{{env.HOME}}/.cache/wasm-pack"
+# Force the cargo build dir to live under the workspace `target/`. This
+# defends against an upstream-shell `CARGO_BUILD_TARGET_DIR=undefined`
+# (or any other stray value) leaking into our builds and producing an
+# orphan `./undefined/` directory at the workspace root. mise injects
+# this env var when entering the workspace, so it overrides whatever
+# the user's shell rc may have set.
+CARGO_BUILD_TARGET_DIR = "{{config_root}}/target"
+
+[tasks.bootstrap]
+description = "One-time setup: add wasm32 target and install wasm-pack"
+run = [
+  "rustup target add wasm32-unknown-unknown",
+  "cargo install wasm-pack",
+]
+
+[tasks.install]
+description = "Install all JS dependencies"
+run = "pnpm install"
+
+[tasks.wasm-dev]
+description = "Build WASM in dev mode"
+run = "pnpm exec nx run cadenza-wasm:wasm:build:dev"
+depends = ["install"]
+
+[tasks.wasm-build]
+description = "Build WASM in release mode"
+run = "pnpm exec nx run cadenza-wasm:wasm:build"
+depends = ["install"]
+
+[tasks.dev]
+description = "Start the development server"
+run = "pnpm exec nx run cadenza-web:dev"
+depends = ["wasm-dev"]
+
+[tasks.build]
+description = "Production build"
+run = "pnpm exec nx run-many -t build"
+depends = ["wasm-build"]
+
+[tasks.test]
+description = "Run all tests"
+run = "pnpm exec nx run-many -t test"
+
+[tasks.lint]
+description = "Lint everything"
+run = "pnpm exec nx run-many -t lint"
+
+[tasks.daemon-build]
+description = "Build the native cadenza-daemon binary"
+run = "pnpm exec nx run cadenza-daemon:build"
+
+[tasks.daemon]
+description = "Run the native cadenza-daemon (audio + WebSocket on :7878)"
+run = "pnpm exec nx run cadenza-daemon:run"
+depends = ["daemon-build"]

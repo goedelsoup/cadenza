@@ -1,0 +1,12 @@
+[package]
+name = "cadenza-theory"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[features]
+default = []
+std = []

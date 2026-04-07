@@ -1,0 +1,22 @@
+{
+  "name": "cadenza-ipc",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "root": "packages/cadenza-ipc",
+  "tags": ["lang:rust", "scope:ipc"],
+  "implicitDependencies": ["cadenza-theory"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": { "command": "mise exec -- cargo build -p cadenza-ipc", "cwd": "." }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "mise exec -- cargo test -p cadenza-ipc", "cwd": "." }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": { "command": "mise exec -- cargo clippy -p cadenza-ipc -- -D warnings", "cwd": "." }
+    }
+  }
+}

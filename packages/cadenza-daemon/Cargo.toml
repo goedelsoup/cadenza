@@ -1,0 +1,59 @@
+[package]
+name        = "cadenza-daemon"
+description = "Native audio/VST host daemon for Cadenza"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cadenza-daemon"
+path = "src/main.rs"
+
+[features]
+default = ["clap-host"]
+
+# Enables tests that open a real audio output device. Off by default so
+# `cargo test -p cadenza-daemon` is safe to run on headless CI runners.
+# Enable locally with `cargo test -p cadenza-daemon --features audio-device-tests`.
+audio-device-tests = []
+
+# Real CLAP plugin hosting via clack-host. On by default. Compile out with
+# `--no-default-features` for headless builds that don't need plugin hosting.
+clap-host = ["dep:clack-host"]
+
+# Loads the committed nih-plug `gain` example .clap binary at
+# `tests/fixtures/gain.clap` and verifies it loads, activates, and processes
+# a buffer through clack-host. Requires `clap-host`. Off by default.
+clap-host-tests = ["clap-host"]
+
+[dependencies]
+cadenza-theory = { path = "../cadenza-theory", features = ["std"] }
+cadenza-ipc    = { path = "../cadenza-ipc" }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+thiserror      = { workspace = true }
+
+tokio          = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+axum           = { version = "0.7", features = ["ws"] }
+futures-util   = "0.3"
+cpal           = "0.15"
+ringbuf        = "0.4"
+crossbeam-channel = "0.5"
+tracing        = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Real CLAP plugin hosting. Pinned to a specific commit on prokopyl/clack
+# because clack-host is not yet published to crates.io. The pin gives us
+# byte-reproducible builds; bump this hash deliberately when we want a
+# clack update. License: MIT OR Apache-2.0. MSRV inside the dep is 1.85.
+clack-host = { git = "https://github.com/prokopyl/clack.git", rev = "4541f03792635dfdc6be9441a01b786e9b4ccf18", optional = true }
+
+# VST3 hosting — see crates/cadenza-daemon/src/host/vst3.rs (when added).
+# Phase 5b research found `vst3-sys` (the prompt's suggestion) is unpublished
+# on crates.io and the upstream RustAudio repo's last commit was June 2023.
+# Backend choice deferred until Item 3 lands in a follow-up turn.
+
+[dev-dependencies]
+tokio-tungstenite = "0.24"
+tokio              = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+tempfile           = "3"

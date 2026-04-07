@@ -1,0 +1,11 @@
+[package]
+name        = "cadenza-musicxml"
+description = "MusicXML 4.0 rendering — MuseScore compatible"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cadenza-theory = { path = "../cadenza-theory", features = ["std"] }
+serde          = { workspace = true }
+thiserror      = { workspace = true }

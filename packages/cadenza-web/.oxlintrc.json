@@ -1,0 +1,11 @@
+{
+  "rules": {
+    "no-unused-vars":        "warn",
+    "no-console":            "off",
+    "prefer-const":          "error",
+    "no-var":                "error",
+    "eqeqeq":               ["error", "always"],
+    "no-duplicate-imports":  "error"
+  },
+  "ignore": ["dist/**", ".svelte-kit/**"]
+}

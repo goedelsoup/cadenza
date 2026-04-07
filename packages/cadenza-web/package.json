@@ -1,0 +1,34 @@
+{
+  "name": "@cadenza/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev":     "vite dev",
+    "build":   "vite build",
+    "preview": "vite preview",
+    "test":    "vitest run --passWithNoTests",
+    "lint":    "oxlint src"
+  },
+  "dependencies": {
+    "@cadenza/types":    "workspace:*",
+    "@cadenza/session":  "workspace:*",
+    "@cadenza/api":      "workspace:*",
+    "@cadenza/player":   "workspace:*",
+    "@anthropic-ai/sdk": "catalog:"
+  },
+  "devDependencies": {
+    "@sveltejs/kit":                 "catalog:",
+    "@sveltejs/adapter-static":      "catalog:",
+    "@sveltejs/vite-plugin-svelte":  "catalog:",
+    "svelte":                        "catalog:",
+    "svelte-check":                  "catalog:",
+    "vite":                          "catalog:",
+    "vite-plugin-wasm":              "catalog:",
+    "vite-plugin-top-level-await":   "catalog:",
+    "vitest":                        "catalog:",
+    "@vitest/ui":                    "catalog:",
+    "oxlint":                        "catalog:",
+    "typescript":                    "catalog:"
+  }
+}

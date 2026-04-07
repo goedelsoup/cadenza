@@ -1,0 +1,9 @@
+[package]
+name = "cadenza-musicxml"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+cadenza-theory = { path = "../cadenza-theory", features = ["std"] }
+serde = { workspace = true }
+thiserror = { workspace = true }
