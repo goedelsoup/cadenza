@@ -162,3 +162,9 @@ Daemon discovery for the web app:
 - No direct `console.log` in TS library packages; use the `log()` callback pattern
   established in `+page.svelte`
 - AI prompt strings live in `cadenza-api/src/prompts.ts` only — not inline in components
+
+## Workflow
+
+- **Never create git commits.** The user always handles committing themselves.
+  Stage changes if asked, but do not run `git commit` — leave the working tree
+  dirty for the user to review and commit.

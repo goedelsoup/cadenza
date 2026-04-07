@@ -255,6 +255,7 @@ type GetPluginFactoryFn = unsafe extern "system" fn() -> *mut IPluginFactory;
 /// every loaded library mapped for the life of the process (the Library
 /// handle is owned by `LoadedPlugin` and dropped on Unload, which
 /// implicitly tears down the bundle).
+#[cfg(target_os = "macos")]
 type ModuleEntryFn = unsafe extern "system" fn(*mut std::ffi::c_void) -> bool;
 
 #[cfg(target_os = "macos")]
@@ -278,7 +279,10 @@ fn load_on_main(
 
     // Call the bundle's entry point so the plugin can perform any
     // one-time initialization. Many simple plugins don't need it but
-    // calling it is required by the VST3 spec.
+    // calling it is required by the VST3 spec. Only macOS is wired up
+    // in v1 — `resolve_bundle_binary` already errors out on Linux/Windows
+    // before we get here, so this block is unreachable on those targets.
+    #[cfg(target_os = "macos")]
     unsafe {
         if let Ok(entry) = library.get::<ModuleEntryFn>(MODULE_ENTRY_SYM) {
             // Argument is a CFBundleRef on macOS; passing null is the
