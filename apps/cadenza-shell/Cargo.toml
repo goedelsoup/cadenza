@@ -1,0 +1,31 @@
+[package]
+name        = "cadenza-shell"
+description = "Tauri 2 native shell that hosts cadenza-web and supervises cadenza-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cadenza-shell"
+path = "src/main.rs"
+
+[build-dependencies]
+# Generates the Tauri context (config + capabilities + assets) at build
+# time. Must match the major/minor of the runtime `tauri` dependency.
+tauri-build = { version = "2.5", features = [] }
+
+[dependencies]
+# Tauri 2 core. License: MIT OR Apache-2.0. MSRV inside the dep is 1.77,
+# satisfied by our 1.94 toolchain. We pin to 2.10 (latest as of April 2026)
+# and let cargo pick the patch.
+tauri = { version = "2.10", features = ["tray-icon"] }
+
+# JSON serialization for the Tauri config and command args.
+serde      = { workspace = true }
+serde_json = { workspace = true }
+
+# Lightweight logging — Tauri itself uses the `log` facade so we wire
+# `tracing-subscriber` to capture both Cadenza's own tracing and Tauri's
+# log output through one sink. Same setup the daemon uses.
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

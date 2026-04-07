@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Cadenza",
+  "version": "0.1.0",
+  "identifier": "com.goedelsoup.cadenza",
+  "build": {
+    "frontendDist": "../cadenza-web/build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Cadenza",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:7878 https://api.anthropic.com; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all",
+    "category": "Music",
+    "shortDescription": "AI-assisted songwriting workstation",
+    "longDescription": "Cadenza is an AI-assisted songwriting workstation that generates MIDI phrases, chord progressions, and MuseScore-compatible MusicXML from natural language prompts."
+  }
+}

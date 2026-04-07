@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/cadenza-daemon/**'
+      - 'apps/cadenza-daemon/**'
       - 'packages/cadenza-ipc/**'
       - 'packages/cadenza-theory/**'
       - 'Cargo.toml'
@@ -12,7 +12,7 @@ on:
       - '.github/workflows/daemon.yml'
   pull_request:
     paths:
-      - 'packages/cadenza-daemon/**'
+      - 'apps/cadenza-daemon/**'
       - 'packages/cadenza-ipc/**'
       - 'packages/cadenza-theory/**'
       - 'Cargo.toml'

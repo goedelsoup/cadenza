@@ -9,18 +9,23 @@ composition and notation tool.
 ## Repo structure
 
     cadenza/
+    ├── apps/
+    │   ├── cadenza-daemon/      # Rust — native audio host (cpal + CLAP/VST3)
+    │   ├── cadenza-shell/       # Rust — Tauri 2 native shell that hosts cadenza-web and supervises cadenza-daemon
+    │   └── cadenza-web/         # SvelteKit app
     ├── packages/
     │   ├── cadenza-theory/      # Rust, no_std — music theory primitives
     │   ├── cadenza-midi/        # Rust — MIDI 1.0 serializer + reader
     │   ├── cadenza-musicxml/    # Rust — MusicXML 4.0 renderer (MuseScore)
     │   ├── cadenza-wasm/        # Rust — wasm-bindgen surface, thread-local session
+    │   ├── cadenza-ipc/         # Rust — daemon ↔ frontend wire protocol
     │   ├── cadenza-types/       # TS — shared type contracts (no runtime deps)
     │   ├── cadenza-session/     # TS — session state + context builder
-    │   ├── cadenza-api/         # TS — Anthropic SDK, WASM bridge, MIDI export
-    │   └── cadenza-web/         # SvelteKit app
+    │   ├── cadenza-player/      # TS — Tone.js fallback playback engine
+    │   └── cadenza-api/         # TS — Anthropic SDK, WASM bridge, MIDI export
     ├── Cargo.toml               # Rust workspace
-    ├── nx.json                  # Nx task graph config
-    ├── pnpm-workspace.yaml
+    ├── nx.json                  # Nx task graph config (appsDir=apps, libsDir=packages)
+    ├── pnpm-workspace.yaml      # `apps/*` and `packages/*` globs
     ├── tsconfig.base.json
     └── mise.toml                # Dev environment bootstrap
 
@@ -96,33 +101,44 @@ are kept in sync manually.
 | 3 | ⬜ | Lyric generation with syllable/meter alignment to phrase rhythm |
 | 4 | ✅ done | In-browser playback via WebAudio / Tone.js |
 | 5 | 🔧 next | Native Rust daemon · sample-accurate scheduling · `Instrument` trait + VST3/CLAP scaffolding |
-| 5b | ⬜ | Real VST3 (`vst3-sys`) + CLAP (`clack-host`) plugin loading; daemon launcher (Tauri/menu-bar app); systemd/launchd units |
+| 5b | ✅ done | Real CLAP hosting (`clack-host`); real VST3 hosting (`vst3 = "0.3.0"` from coupler-rs); Tauri 2 native shell at `apps/cadenza-shell/` |
+| 5c | ⬜ | Plugin parameter automation; plugin GUIs; sandboxing; Tauri shell code-signing/notarization/auto-update; restart-on-crash daemon supervision |
 
 ### Phase 5 architecture (current)
 
-The native daemon (`packages/cadenza-daemon`) hosts a cpal output stream
+The native daemon (`apps/cadenza-daemon`) hosts a cpal output stream
 on a parked OS thread, an SPSC ringbuf for `TimedCmd { frame, AudioCmd }`
 events, and a sample-accurate `Renderer` that holds a `Box<dyn Instrument>`
-swappable via a second SPSC ringbuf. Old instruments are evicted to a
-return ringbuf and dropped on the control thread (drops allocate, which
-is forbidden on the audio thread).
+swappable via a second SPSC ringbuf. Evicted instruments are tagged with
+their `PluginId` and routed back through `swap_out_rx` → a 100ms-tick
+tokio task → `PluginHost::return_instrument`, so re-activating a previously
+loaded plugin is a hot swap and not a reload from disk.
 
-The `Instrument` trait (`packages/cadenza-daemon/src/instrument.rs`) is the
-abstraction over the built-in `PolySynth`, the VST3 backend, and the CLAP
-backend. The two plugin backends are scaffolded but their actual loaders
-are stubs that produce silence — the trait, swap mechanism, plugin scanning
-(by file extension on `tokio::task::spawn_blocking`), the IPC surface
-(`ScanPlugins`/`ScannedPlugins`/`LoadPlugin`/`SetInstrument`/`UseBuiltinSynth`),
-the server handlers, and the TS bridge mirror are all real. To finish:
-add `vst3-sys` / `clack-host` deps and replace the loaders in the
-`vst3` and `clap` modules of `host.rs`. The doc comments at the top of
-each module describe exactly what's needed.
+The `Instrument` trait (`apps/cadenza-daemon/src/instrument.rs`) is the
+abstraction over the built-in `PolySynth`, hosted CLAP plugins, and (in
+progress) hosted VST3 plugins. The CLAP backend
+(`apps/cadenza-daemon/src/host/clap_backend.rs`) is real and gated behind
+the on-by-default `clap-host` cargo feature. It owns a dedicated
+`clap-main` OS thread to satisfy `PluginInstance`'s `!Send` constraint;
+only the `Send` `StartedPluginAudioProcessor` crosses to the audio thread.
+The smoke test under `--features clap-host-tests` loads a committed
+nih-plug `gain` example bundle and verifies the full lifecycle.
 
-Daemon discovery for the web app: there is no auto-launcher today. Users
-run `mise run daemon` (or `cargo run -p cadenza-daemon`) in a terminal.
-The header status indicator on the web app shows the live connection
-state via `daemon().onStatusChange()`. A bundled native shell (Tauri or
-similar) is deferred to phase 5b.
+Daemon discovery for the web app:
+- **Standalone (`nx run cadenza-web:dev`):** users run `mise run daemon`
+  (or `cargo run -p cadenza-daemon`) in a separate terminal. The web
+  app's header status indicator shows the live connection state via
+  `daemon().onStatusChange()`.
+- **Bundled (`cargo run -p cadenza-shell`):** the Tauri shell at
+  `apps/cadenza-shell/` spawns the daemon as a child process at startup,
+  hosts `apps/cadenza-web/build/` inside a native window via the
+  platform webview, and reaps the child on window close. A
+  system-tray / menu-bar item polls the child every 1s and reports
+  `daemon: running | exited (N) | not started`. The shell is purely
+  additive — running `nx run cadenza-web:dev` standalone keeps working.
+  See [`apps/cadenza-shell/src/main.rs`](apps/cadenza-shell/src/main.rs)
+  for daemon binary discovery (env override → exe sibling →
+  workspace target dir) and the `DaemonSupervisor` struct.
 
 ## Known gaps / immediate TODOs
 

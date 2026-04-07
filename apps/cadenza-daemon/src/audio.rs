@@ -685,23 +685,18 @@ mod tests {
     #[test]
     fn evicted_instrument_is_routed_back_to_host_for_reuse() {
         use crate::host::PluginHost;
-        use std::fs::File;
 
-        let dir = tempfile::Builder::new()
-            .prefix("cadenza-roundtrip")
-            .tempdir()
-            .expect("tempdir");
-        // Use a `.vst3` extension because the VST3 backend is still
-        // a stub that accepts any path; the real CLAP backend (enabled
-        // by default) would correctly reject this fake empty file.
-        let plugin_path = dir.path().join("fake.vst3");
-        File::create(&plugin_path).expect("create fake plugin");
-
+        // Both host backends are real now, so this test uses the
+        // PluginHost's `insert_for_test` back door to register a dummy
+        // instrument without touching a real `.clap` or `.vst3` file.
+        // The behavior under test is the host's take/return bookkeeping
+        // and the audio engine's swap routing — neither needs a real
+        // plugin binary.
         let mut host = PluginHost::new();
-        let loaded = host
-            .load(plugin_path.to_str().unwrap(), 48_000)
-            .expect("host load");
-        let id = loaded.id;
+        let id = host.insert_for_test(
+            "fake-plugin",
+            Box::new(PolySynth::new(48_000.0)),
+        );
 
         // Pull the instrument out of the host as the server would when
         // SetInstrument arrives, then push it through the swap inbox.

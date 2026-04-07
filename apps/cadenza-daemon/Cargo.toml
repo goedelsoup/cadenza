@@ -10,7 +10,7 @@ name = "cadenza-daemon"
 path = "src/main.rs"
 
 [features]
-default = ["clap-host"]
+default = ["clap-host", "vst3-host"]
 
 # Enables tests that open a real audio output device. Off by default so
 # `cargo test -p cadenza-daemon` is safe to run on headless CI runners.
@@ -26,9 +26,20 @@ clap-host = ["dep:clack-host"]
 # a buffer through clack-host. Requires `clap-host`. Off by default.
 clap-host-tests = ["clap-host"]
 
+# Real VST3 plugin hosting via the `vst3` crate (coupler-rs/vst3-rs).
+# On by default. Compile out with `--no-default-features` for headless
+# builds that don't need plugin hosting.
+vst3-host = ["dep:vst3", "dep:libloading"]
+
+# Loads the committed nih-plug `gain` example .vst3 bundle at
+# `tests/fixtures/gain.vst3` and verifies it loads, instantiates, sets
+# up processing, and runs a process() block. Requires `vst3-host`.
+# Off by default for the same reasons as `clap-host-tests`.
+vst3-host-tests = ["vst3-host"]
+
 [dependencies]
-cadenza-theory = { path = "../cadenza-theory", features = ["std"] }
-cadenza-ipc    = { path = "../cadenza-ipc" }
+cadenza-theory = { path = "../../packages/cadenza-theory", features = ["std"] }
+cadenza-ipc    = { path = "../../packages/cadenza-ipc" }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
 thiserror      = { workspace = true }
@@ -48,10 +59,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # clack update. License: MIT OR Apache-2.0. MSRV inside the dep is 1.85.
 clack-host = { git = "https://github.com/prokopyl/clack.git", rev = "4541f03792635dfdc6be9441a01b786e9b4ccf18", optional = true }
 
-# VST3 hosting — see crates/cadenza-daemon/src/host/vst3.rs (when added).
-# Phase 5b research found `vst3-sys` (the prompt's suggestion) is unpublished
-# on crates.io and the upstream RustAudio repo's last commit was June 2023.
-# Backend choice deferred until Item 3 lands in a follow-up turn.
+# Real VST3 plugin hosting via coupler-rs/vst3-rs. Raw FFI bindings to
+# the VST3 SDK plus COM smart pointers — no high-level host wrapper, so
+# the host glue in `src/host/vst3_backend.rs` is hand-written. License:
+# MIT OR Apache-2.0. The original Phase 5b plan called for `vst3-sys`,
+# which is unpublished and unmaintained as of mid-2023. The `vst3` crate
+# was the live alternative as of April 2026.
+vst3       = { version = "0.3.0", optional = true }
+libloading = { version = "0.8", optional = true }
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"

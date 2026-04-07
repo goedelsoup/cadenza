@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for the Cadenza window. v1 keeps the surface tiny: the web app talks to the daemon via WebSocket on its own, so it does not need any Tauri command access. We allow only the core ping for health-checking the bridge.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:webview:default",
+    "core:event:default",
+    "core:app:default"
+  ]
+}

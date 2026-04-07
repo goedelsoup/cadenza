@@ -6,7 +6,8 @@ members = [
   "packages/cadenza-musicxml",
   "packages/cadenza-wasm",
   "packages/cadenza-ipc",
-  "packages/cadenza-daemon",
+  "apps/cadenza-daemon",
+  "apps/cadenza-shell",
 ]
 
 [workspace.package]

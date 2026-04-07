@@ -23,7 +23,9 @@
 //! at the top of each module for the concrete crate / unsafe boundary
 //! each backend will need.
 
-use crate::instrument::{Instrument, InstrumentBox};
+use crate::instrument::InstrumentBox;
+#[cfg(any(not(feature = "clap-host"), not(feature = "vst3-host")))]
+use crate::instrument::Instrument;
 use cadenza_ipc::{PluginId, PluginParam};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -165,6 +167,27 @@ impl PluginHost {
             None    => Err(HostError::NotFound(format!("id {id}"))),
         }
     }
+
+    /// Register a pre-constructed instrument directly, bypassing the
+    /// backend loader. Test-only — the `load()` path now always runs
+    /// through a real backend that actually `dlopen`s the plugin, so
+    /// tests that exercise bookkeeping (id assignment, take/return/unload)
+    /// cannot use fake on-disk files and need this back door. Returns
+    /// the assigned [`PluginId`].
+    #[cfg(test)]
+    pub(crate) fn insert_for_test(&mut self, name: &str, inst: InstrumentBox) -> PluginId {
+        let id = self.next_id;
+        self.next_id = self.next_id.checked_add(1).unwrap_or(1);
+        self.plugins.insert(
+            id,
+            LoadedEntry {
+                name:   name.to_string(),
+                params: Vec::new(),
+                instrument: Some(inst),
+            },
+        );
+        id
+    }
 }
 
 fn matches_plugin_ext(p: &Path) -> bool {
@@ -175,26 +198,34 @@ fn matches_plugin_ext(p: &Path) -> bool {
 }
 
 // ── Stub instrument shared by both backends ─────────────────────────────────
+//
+// Only compiled when at least one of the host backends is feature-gated
+// off; with both `clap-host` and `vst3-host` enabled (the default) every
+// `load()` path goes through a real backend and `StubInstrument` is dead
+// code, which would otherwise trigger `-D warnings`.
 
 /// Silence-producing instrument used by the VST3 and CLAP backend stubs.
 /// Logs a one-time warning per instance so the user can see that the
-/// scaffolding is in place but real hosting hasn't been wired up yet.
+/// scaffolding is in place but real hosting is not wired up.
+#[cfg(any(not(feature = "clap-host"), not(feature = "vst3-host")))]
 pub(crate) struct StubInstrument {
     name:        String,
     backend:     &'static str,
     warned:      bool,
-    /// Sample rate the plugin was prepared for. Real backends will use
-    /// this to drive plugin process() calls.
+    /// Sample rate the plugin was prepared for. Real backends use this
+    /// to drive plugin process() calls.
     #[allow(dead_code)]
     sample_rate: u32,
 }
 
+#[cfg(any(not(feature = "clap-host"), not(feature = "vst3-host")))]
 impl StubInstrument {
     pub(crate) fn new(name: String, backend: &'static str, sample_rate: u32) -> Self {
         Self { name, backend, warned: false, sample_rate }
     }
 }
 
+#[cfg(any(not(feature = "clap-host"), not(feature = "vst3-host")))]
 impl Instrument for StubInstrument {
     fn note_on(&mut self, _pitch: u8, _velocity: u8)  {}
     fn note_off(&mut self, _pitch: u8)                {}
@@ -209,7 +240,7 @@ impl Instrument for StubInstrument {
         if !self.warned {
             tracing::warn!(
                 "{} plugin '{}' is a scaffolded stub — producing silence. \
-                 Drop in real hosting via vst3-sys / clack-host to enable.",
+                 Compile with --features clap-host (or vst3-host) to enable real loading.",
                 self.backend, self.name
             );
             self.warned = true;
@@ -219,40 +250,33 @@ impl Instrument for StubInstrument {
     }
 }
 
+#[cfg(any(not(feature = "clap-host"), not(feature = "vst3-host")))]
 use crate::audio::AudioCmd;
 
-// ── VST3 backend stub ───────────────────────────────────────────────────────
+// ── VST3 backend ────────────────────────────────────────────────────────────
+//
+// When the `vst3-host` feature is enabled, dispatches to the real loader
+// in [`vst3_backend`]. Otherwise falls back to a stub that produces
+// silence so the daemon still builds and runs without the optional
+// dependency.
 
+#[cfg(feature = "vst3-host")]
+mod vst3_backend;
+
+#[cfg(feature = "vst3-host")]
 mod vst3 {
-    //! VST3 backend stub.
-    //!
-    //! ## To finish this backend
-    //!
-    //! 1. Add `vst3-sys = "0.1"` to `cadenza-daemon/Cargo.toml`.
-    //! 2. Replace [`load`] below with code that:
-    //!    - Loads the plugin bundle (`.vst3` is a directory on macOS, a
-    //!      shared library file on Linux/Windows). Use `libloading` to
-    //!      open the platform-specific binary inside the bundle.
-    //!    - Calls `GetPluginFactory` to obtain `IPluginFactory*`.
-    //!    - Enumerates classes and instantiates the first audio effect /
-    //!      instrument class as `IAudioProcessor` + `IComponent`.
-    //!    - Calls `setupProcessing` with `ProcessSetup` (sampleRate set to
-    //!      the device rate, blockSize set to a fixed safe upper bound).
-    //!    - Activates the component and audio processor.
-    //! 3. Define a `Vst3Instrument` struct that owns the plugin handles
-    //!    and implements `Instrument`. The `render_with_events` method
-    //!    builds a `ProcessData` with sample-accurate event input from
-    //!    the supplied event slice and calls `IAudioProcessor::process`.
-    //! 4. Pre-allocate any input/output `AudioBusBuffers` and event lists
-    //!    in the constructor — never in `render_with_events`.
-    //! 5. Document `unsafe` invariants thoroughly. The cpal callback must
-    //!    not own COM-style interfaces that aren't `Send`; if the plugin
-    //!    isn't audio-thread safe, host it on its own thread and use a
-    //!    second ringbuf for sample-accurate event injection.
-    //! 6. Licensing note: `vst3-sys` re-implements the COM interfaces in
-    //!    Rust to avoid bundling Steinberg's GPL/proprietary SDK headers.
-    //!    Verify this is acceptable for your distribution model before
-    //!    shipping.
+    use super::{HostError, InstrumentBox};
+    use std::path::Path;
+
+    pub(super) fn load(path: &Path, sample_rate: u32) -> Result<(InstrumentBox, String), HostError> {
+        super::vst3_backend::load(path, sample_rate)
+    }
+}
+
+#[cfg(not(feature = "vst3-host"))]
+mod vst3 {
+    //! VST3 backend stub. Compile with `--features vst3-host` (the default)
+    //! to enable real plugin loading via the `vst3` crate (coupler-rs).
 
     use super::{HostError, InstrumentBox, StubInstrument};
     use std::path::Path;
@@ -263,7 +287,10 @@ mod vst3 {
             .and_then(|n| n.to_str())
             .unwrap_or("unknown.vst3")
             .to_string();
-        tracing::info!("VST3 stub: 'loading' {} (real hosting not yet wired)", name);
+        tracing::info!(
+            "VST3 backend disabled (feature `vst3-host` off): producing silence for {}",
+            name
+        );
         let inst: InstrumentBox = Box::new(StubInstrument::new(name.clone(), "VST3", sample_rate));
         Ok((inst, name))
     }
@@ -372,26 +399,23 @@ mod tests {
         assert!(matches!(result, Err(HostError::ScanFailed(_))));
     }
 
-    // These tests use empty `.vst3` files because the VST3 backend is
-    // still a stub that accepts any path. The CLAP backend now actually
-    // dlopens the file (via clack-host's libloading), so a fake empty
-    // `.clap` would correctly fail to load. CLAP coverage moved to
-    // tests/clap_smoke.rs which uses the real bundled gain fixture.
-    #[test]
-    fn load_dispatches_by_extension_and_assigns_unique_ids() {
-        let mut host = PluginHost::new();
-        let dir = temp_dir();
-        make_fake_plugin(dir.path(), "foo.vst3");
-        make_fake_plugin(dir.path(), "bar.vst3");
+    // Both backends are real now — `host.load()` actually `dlopen`s the
+    // file. The tests below that need a registered plugin without going
+    // through real backend loading use `insert_for_test`. The full real
+    // load path is covered by the smoke tests in `clap_backend.rs::smoke`
+    // and `vst3_backend.rs::smoke` against committed fixtures.
 
-        let foo_path = dir.path().join("foo.vst3");
-        let bar_path = dir.path().join("bar.vst3");
-        let a = host.load(foo_path.to_str().unwrap(), 48_000).expect("load vst3 a");
-        let b = host.load(bar_path.to_str().unwrap(), 48_000).expect("load vst3 b");
-        assert_eq!(a.id, 1);
-        assert_eq!(b.id, 2);
-        assert_eq!(a.name, "foo.vst3");
-        assert_eq!(b.name, "bar.vst3");
+    fn dummy_instrument() -> InstrumentBox {
+        Box::new(crate::synth::PolySynth::new(48_000.0))
+    }
+
+    #[test]
+    fn insert_for_test_assigns_unique_ascending_ids() {
+        let mut host = PluginHost::new();
+        let a = host.insert_for_test("foo.vst3", dummy_instrument());
+        let b = host.insert_for_test("bar.clap", dummy_instrument());
+        assert_eq!(a, 1);
+        assert_eq!(b, 2);
     }
 
     #[test]
@@ -414,30 +438,24 @@ mod tests {
     #[test]
     fn take_instrument_returns_some_then_none() {
         let mut host = PluginHost::new();
-        let dir = temp_dir();
-        make_fake_plugin(dir.path(), "x.vst3");
-        let path = dir.path().join("x.vst3");
-        let loaded = host.load(path.to_str().unwrap(), 48_000).unwrap();
+        let id = host.insert_for_test("x.vst3", dummy_instrument());
 
-        let first = host.take_instrument(loaded.id);
+        let first = host.take_instrument(id);
         assert!(first.is_some());
-        let second = host.take_instrument(loaded.id);
+        let second = host.take_instrument(id);
         assert!(second.is_none());
 
         // Returning the instrument makes it available again.
-        host.return_instrument(loaded.id, first.unwrap());
-        assert!(host.take_instrument(loaded.id).is_some());
+        host.return_instrument(id, first.unwrap());
+        assert!(host.take_instrument(id).is_some());
     }
 
     #[test]
     fn unload_removes_entry() {
         let mut host = PluginHost::new();
-        let dir = temp_dir();
-        make_fake_plugin(dir.path(), "x.vst3");
-        let path = dir.path().join("x.vst3");
-        let loaded = host.load(path.to_str().unwrap(), 48_000).unwrap();
+        let id = host.insert_for_test("x.vst3", dummy_instrument());
 
-        host.unload(loaded.id).expect("unload");
-        assert!(host.unload(loaded.id).is_err());
+        host.unload(id).expect("unload");
+        assert!(host.unload(id).is_err());
     }
 }

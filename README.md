@@ -97,8 +97,9 @@ cadenza-web:build
 | 2 | 🔧 | Rust/WASM core wired in (proper MIDI + MusicXML) |
 | 3 | ⬜ | Lyric generation with syllable/meter alignment |
 | 4 | ✅ | In-browser playback (WebAudio / Tone.js) |
-| 5 | 🔧 | Native Rust daemon · sample-accurate scheduling · VST3/CLAP host scaffolding |
-| 5b | ⬜ | Real VST3 (`vst3-sys`) and CLAP (`clack-host`) plugin loading; bundled launcher |
+| 5 | ✅ | Native Rust daemon · sample-accurate scheduling · `Instrument` trait |
+| 5b | ✅ | Real CLAP (`clack-host`) and VST3 (`vst3 = 0.3`) plugin loading; Tauri 2 native shell |
+| 5c | ⬜ | Plugin parameter automation · plugin GUIs · Tauri shell code-signing/notarization · restart-on-crash supervision |
 
 ## Native daemon (optional)
 
@@ -120,17 +121,49 @@ indicator that updates live as the bridge connects, heartbeats, and reconnects.
 
 When the daemon is running, the web app routes all `play` commands through
 the WebSocket bridge; the daemon's audio thread renders sample-accurate output
-through `cpal` and the built-in `PolySynth`. VST3 and CLAP plugin hosting is
-scaffolded (the trait, swap mechanism, scanning, and IPC surface are all in
-place) but the actual loaders are stubs that produce silence — see the
-backend modules in [`packages/cadenza-daemon/src/host.rs`](packages/cadenza-daemon/src/host.rs)
-for what's needed to wire `vst3-sys` and `clack-host` in.
+through `cpal` and the built-in `PolySynth`. CLAP plugin hosting is real,
+backed by [`clack-host`](https://github.com/prokopyl/clack), and lives at
+[`apps/cadenza-daemon/src/host/clap_backend.rs`](apps/cadenza-daemon/src/host/clap_backend.rs).
+VST3 hosting is real, backed by [`vst3 = 0.3.0`](https://crates.io/crates/vst3)
+(coupler-rs), and lives at
+[`apps/cadenza-daemon/src/host/vst3_backend.rs`](apps/cadenza-daemon/src/host/vst3_backend.rs).
+Both backends are gated behind the on-by-default `clap-host` and `vst3-host`
+cargo features, and both have feature-gated smoke tests
+(`--features clap-host-tests` / `--features vst3-host-tests`) that load
+real bundled plugins from `apps/cadenza-daemon/tests/fixtures/`.
 
-### Future native shell
+## Native shell (optional)
 
-A bundled launcher (Tauri / Electron / native menu-bar app) that starts the
-daemon automatically alongside the web UI is **not** in this phase. For now
-the daemon is run manually from a terminal.
+The Tauri 2 shell at [`apps/cadenza-shell/`](apps/cadenza-shell/) wraps
+the web app in a native window and supervises the daemon for the user,
+so you don't have to run `mise run daemon` in a separate terminal.
+
+```bash
+# One-time: build the daemon and the cadenza-web static bundle
+cargo build -p cadenza-daemon
+nx run cadenza-web:build
+
+# Launch the shell — it will spawn the daemon, render cadenza-web inside
+# a native window, and reap the child on close.
+cargo run -p cadenza-shell
+```
+
+The shell adds a system-tray / menu-bar item with a `daemon: running |
+exited (N) | not started` label that polls the supervised child every
+1s. The child is killed via the OS signal mechanism on window close (or
+on clicking the tray's "Quit Cadenza" item).
+
+The shell is **purely additive** — `nx run cadenza-web:dev` standalone
+keeps working exactly as before, with or without the shell installed.
+
+### Bundling for distribution
+
+For Phase 5b v1 the shell builds as a regular Cargo binary
+(`bundle.active = false` in
+[`apps/cadenza-shell/tauri.conf.json`](apps/cadenza-shell/tauri.conf.json)).
+To produce a redistributable `.app` / `.AppImage` / `.exe` you'll need
+the Tauri CLI and a full icon set. That's documented as Phase 5c work;
+code-signing, notarization, and auto-update are also 5c.
 
 ## Session context layer
 
