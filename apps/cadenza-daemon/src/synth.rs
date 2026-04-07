@@ -155,6 +155,8 @@ impl PolySynth {
             AudioCmd::NoteOn  { pitch, velocity } => self.note_on(pitch, velocity),
             AudioCmd::NoteOff { pitch }           => self.note_off(pitch),
             AudioCmd::AllNotesOff                  => self.all_notes_off(),
+            // Built-in synth has no parameters; silently ignore.
+            AudioCmd::ParamSet { .. }              => {}
         }
     }
 }

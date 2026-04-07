@@ -58,6 +58,22 @@ pub enum AudioCmd {
     NoteOn  { pitch: u8, velocity: u8 },
     NoteOff { pitch: u8 },
     AllNotesOff,
+    /// Set a plugin parameter to a new value at a sample-accurate frame
+    /// offset within the current process block. The audio thread carries
+    /// this through the same `pending` queue as note events; the active
+    /// instrument is responsible for translating it into its backend's
+    /// native parameter event format (CLAP `ParamValueEvent`, etc.). The
+    /// built-in `PolySynth` and the VST3 backend ignore this variant.
+    ///
+    /// The field-level `#[allow(dead_code)]` keeps the no-default-features
+    /// build (without `clap-host`) clean: with both backends compiled out,
+    /// nothing reads `param_id` / `value` because `PolySynth` and the
+    /// stubs ignore the variant. The CLAP backend reads them when
+    /// `clap-host` is on.
+    ParamSet {
+        #[allow(dead_code)] param_id: u32,
+        #[allow(dead_code)] value: f32,
+    },
 }
 
 /// `AudioCmd` tagged with the absolute frame number it should fire on.
@@ -599,9 +615,15 @@ mod tests {
         notes_on:   u32,
         all_off:    u32,
         renders:    u32,
+        /// Captured (frame_offset, param_id, value) for every `ParamSet`
+        /// the audio thread routed through this instrument. Used by the
+        /// `param_set_routes_through_pending_queue` test to verify that
+        /// the new `AudioCmd` variant survives the SPSC ringbuf, the
+        /// sorted-insert pending queue, and the per-buffer scratch slice.
+        param_events: Vec<(u32, u32, f32)>,
     }
     impl CountingInstrument {
-        fn new() -> Self { Self { notes_on: 0, all_off: 0, renders: 0 } }
+        fn new() -> Self { Self { notes_on: 0, all_off: 0, renders: 0, param_events: Vec::new() } }
     }
     impl Instrument for CountingInstrument {
         fn note_on(&mut self, _pitch: u8, _velocity: u8) { self.notes_on += 1; }
@@ -609,9 +631,15 @@ mod tests {
         fn all_notes_off(&mut self) { self.all_off += 1; }
         fn render_with_events(&mut self, _out: &mut [f32], _channels: usize, events: &[(u32, AudioCmd)]) {
             self.renders += 1;
-            for (_, cmd) in events {
-                if let AudioCmd::NoteOn { .. } = cmd { self.notes_on += 1; }
-                if let AudioCmd::AllNotesOff   = cmd { self.all_off  += 1; }
+            for (offset, cmd) in events {
+                match cmd {
+                    AudioCmd::NoteOn  { .. }                    => self.notes_on += 1,
+                    AudioCmd::AllNotesOff                       => self.all_off  += 1,
+                    AudioCmd::ParamSet { param_id, value }      => {
+                        self.param_events.push((*offset, *param_id, *value));
+                    }
+                    AudioCmd::NoteOff { .. } => {}
+                }
             }
         }
     }
@@ -730,6 +758,62 @@ mod tests {
         assert!(
             reused.is_some(),
             "expected the cached instrument to be available for reuse after eviction"
+        );
+    }
+
+    /// `AudioCmd::ParamSet` survives the SPSC ringbuf, the sorted-insert
+    /// pending queue, and the per-buffer scratch slice, and is delivered
+    /// to the active instrument at the right frame offset. The shared
+    /// `Arc<Mutex<Vec<...>>>` lets us inspect the recorded events from
+    /// outside the `Box<dyn Instrument>` boundary; the mutex is uncontended
+    /// because the test runs the renderer synchronously on a single thread.
+    #[test]
+    fn param_set_routes_through_pending_queue_to_instrument() {
+        use std::sync::Mutex;
+
+        struct ParamRecorder {
+            captured: Arc<Mutex<Vec<(u32, u32, f32)>>>,
+        }
+        impl Instrument for ParamRecorder {
+            fn note_on(&mut self, _: u8, _: u8) {}
+            fn note_off(&mut self, _: u8) {}
+            fn all_notes_off(&mut self) {}
+            fn render_with_events(&mut self, _out: &mut [f32], _channels: usize, events: &[(u32, AudioCmd)]) {
+                let mut g = self.captured.lock().expect("lock");
+                for (offset, cmd) in events {
+                    if let AudioCmd::ParamSet { param_id, value } = cmd {
+                        g.push((*offset, *param_id, *value));
+                    }
+                }
+            }
+        }
+
+        let captured = Arc::new(Mutex::new(Vec::<(u32, u32, f32)>::new()));
+        let recorder: InstrumentBox = Box::new(ParamRecorder { captured: captured.clone() });
+
+        let mut h = make_test_renderer(48_000.0, 2);
+        assert!(h.swap_in_prod.try_push((42, recorder)).is_ok());
+
+        // Two param events at different absolute frames inside the same
+        // buffer. They get sorted into the pending queue and emerge in
+        // ascending frame order with offsets relative to `now=0`.
+        h.cmd_prod.try_push(TimedCmd {
+            frame: 800,
+            cmd:   AudioCmd::ParamSet { param_id: 7, value: 0.25 },
+        }).expect("push 1");
+        h.cmd_prod.try_push(TimedCmd {
+            frame: 200,
+            cmd:   AudioCmd::ParamSet { param_id: 3, value: 0.75 },
+        }).expect("push 2");
+
+        let mut buf = vec![0.0f32; 2 * 1024];
+        h.renderer.render(&mut buf);
+
+        let g = captured.lock().expect("lock");
+        assert_eq!(
+            g.as_slice(),
+            &[(200u32, 3u32, 0.75), (800u32, 7u32, 0.25)],
+            "ParamSet events should arrive in frame order with absolute frame as offset"
         );
     }
 

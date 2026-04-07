@@ -19,7 +19,7 @@ audio-device-tests = []
 
 # Real CLAP plugin hosting via clack-host. On by default. Compile out with
 # `--no-default-features` for headless builds that don't need plugin hosting.
-clap-host = ["dep:clack-host"]
+clap-host = ["dep:clack-host", "dep:clack-extensions"]
 
 # Loads the committed nih-plug `gain` example .clap binary at
 # `tests/fixtures/gain.clap` and verifies it loads, activates, and processes
@@ -58,6 +58,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # byte-reproducible builds; bump this hash deliberately when we want a
 # clack update. License: MIT OR Apache-2.0. MSRV inside the dep is 1.85.
 clack-host = { git = "https://github.com/prokopyl/clack.git", rev = "4541f03792635dfdc6be9441a01b786e9b4ccf18", optional = true }
+
+# Plugin parameter extension definitions for the CLAP host. Pinned to the
+# same revision as `clack-host` so the trait/extension impls match. The
+# `params` feature gates the parameter extension; `clack-host` enables the
+# host-side helpers (count/get_info/get_value).
+clack-extensions = { git = "https://github.com/prokopyl/clack.git", rev = "4541f03792635dfdc6be9441a01b786e9b4ccf18", features = ["params", "clack-host"], optional = true }
 
 # Real VST3 plugin hosting via coupler-rs/vst3-rs. Raw FFI bindings to
 # the VST3 SDK plus COM smart pointers — no high-level host wrapper, so

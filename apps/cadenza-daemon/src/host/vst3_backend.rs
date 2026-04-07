@@ -505,9 +505,17 @@ fn load_typed(path: &Path, sample_rate: u32) -> Result<(Vst3Instrument, String),
 /// Load a `.vst3` plugin from `path` and return an [`InstrumentBox`] the
 /// audio engine can swap in. Blocks the calling thread on the round-trip
 /// to `vst3-main`; expected to be called from `tokio::task::spawn_blocking`.
-pub(super) fn load(path: &Path, sample_rate: u32) -> Result<(InstrumentBox, String), HostError> {
+///
+/// The returned parameter list is currently always empty: VST3 parameter
+/// metadata lives on `IEditController`, which this backend does not yet
+/// load (see the module-level "What we don't implement" notes). Phase 5c's
+/// VST3 parameter follow-up will populate this.
+pub(super) fn load(
+    path: &Path,
+    sample_rate: u32,
+) -> Result<(InstrumentBox, String, Vec<cadenza_ipc::PluginParam>), HostError> {
     let (inst, name) = load_typed(path, sample_rate)?;
-    Ok((Box::new(inst), name))
+    Ok((Box::new(inst), name, Vec::new()))
 }
 
 // ── Audio-thread instrument ─────────────────────────────────────────────────

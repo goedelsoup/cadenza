@@ -59,7 +59,13 @@ struct LoadedEntry {
     /// carries name in `PluginLoaded`.
     #[allow(dead_code)]
     name:   String,
-    /// Used once real backends populate per-plugin parameter lists.
+    /// Per-plugin parameter list, populated at load time by the backend
+    /// (CLAP discovers them via the `params` extension; VST3 currently
+    /// returns empty until IEditController hosting lands). The wire
+    /// protocol carries this list in `PluginLoaded` at load time, so the
+    /// daemon doesn't currently need to read it back — but the host owns
+    /// the canonical copy in case a future `GetParams` IPC needs to serve
+    /// it without re-loading.
     #[allow(dead_code)]
     params: Vec<PluginParam>,
     /// `Some` while the plugin is owned by the host (idle); `None` while
@@ -124,7 +130,7 @@ impl PluginHost {
             .and_then(|e| e.to_str())
             .map(str::to_ascii_lowercase);
 
-        let (instrument, name) = match ext.as_deref() {
+        let (instrument, name, params) = match ext.as_deref() {
             Some("vst3") => vst3::load(&p, sample_rate)?,
             Some("clap") => clap::load(&p, sample_rate)?,
             _ => return Err(HostError::UnsupportedFormat(path.to_string())),
@@ -134,11 +140,11 @@ impl PluginHost {
         self.next_id = self.next_id.checked_add(1).unwrap_or(1);
         let entry = LoadedEntry {
             name:   name.clone(),
-            params: Vec::new(),
+            params: params.clone(),
             instrument: Some(instrument),
         };
         self.plugins.insert(id, entry);
-        Ok(LoadedPlugin { id, name, params: Vec::new() })
+        Ok(LoadedPlugin { id, name, params })
     }
 
     /// Take ownership of the boxed instrument for plugin `id`. Returns
@@ -265,10 +271,13 @@ mod vst3_backend;
 
 #[cfg(feature = "vst3-host")]
 mod vst3 {
-    use super::{HostError, InstrumentBox};
+    use super::{HostError, InstrumentBox, PluginParam};
     use std::path::Path;
 
-    pub(super) fn load(path: &Path, sample_rate: u32) -> Result<(InstrumentBox, String), HostError> {
+    pub(super) fn load(
+        path: &Path,
+        sample_rate: u32,
+    ) -> Result<(InstrumentBox, String, Vec<PluginParam>), HostError> {
         super::vst3_backend::load(path, sample_rate)
     }
 }
@@ -278,10 +287,13 @@ mod vst3 {
     //! VST3 backend stub. Compile with `--features vst3-host` (the default)
     //! to enable real plugin loading via the `vst3` crate (coupler-rs).
 
-    use super::{HostError, InstrumentBox, StubInstrument};
+    use super::{HostError, InstrumentBox, PluginParam, StubInstrument};
     use std::path::Path;
 
-    pub(super) fn load(path: &Path, sample_rate: u32) -> Result<(InstrumentBox, String), HostError> {
+    pub(super) fn load(
+        path: &Path,
+        sample_rate: u32,
+    ) -> Result<(InstrumentBox, String, Vec<PluginParam>), HostError> {
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -292,7 +304,7 @@ mod vst3 {
             name
         );
         let inst: InstrumentBox = Box::new(StubInstrument::new(name.clone(), "VST3", sample_rate));
-        Ok((inst, name))
+        Ok((inst, name, Vec::new()))
     }
 }
 
@@ -308,10 +320,13 @@ mod clap_backend;
 
 #[cfg(feature = "clap-host")]
 mod clap {
-    use super::{HostError, InstrumentBox};
+    use super::{HostError, InstrumentBox, PluginParam};
     use std::path::Path;
 
-    pub(super) fn load(path: &Path, sample_rate: u32) -> Result<(InstrumentBox, String), HostError> {
+    pub(super) fn load(
+        path: &Path,
+        sample_rate: u32,
+    ) -> Result<(InstrumentBox, String, Vec<PluginParam>), HostError> {
         super::clap_backend::load(path, sample_rate)
     }
 }
@@ -321,10 +336,13 @@ mod clap {
     //! CLAP backend stub. Compile with `--features clap-host` (the default)
     //! to enable real plugin loading via clack-host.
 
-    use super::{HostError, InstrumentBox, StubInstrument};
+    use super::{HostError, InstrumentBox, PluginParam, StubInstrument};
     use std::path::Path;
 
-    pub(super) fn load(path: &Path, sample_rate: u32) -> Result<(InstrumentBox, String), HostError> {
+    pub(super) fn load(
+        path: &Path,
+        sample_rate: u32,
+    ) -> Result<(InstrumentBox, String, Vec<PluginParam>), HostError> {
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -335,7 +353,7 @@ mod clap {
             name
         );
         let inst: InstrumentBox = Box::new(StubInstrument::new(name.clone(), "CLAP", sample_rate));
-        Ok((inst, name))
+        Ok((inst, name, Vec::new()))
     }
 }
 

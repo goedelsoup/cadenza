@@ -45,7 +45,9 @@ use crate::instrument::{Instrument, InstrumentBox};
 
 use super::HostError;
 
-use clack_host::events::event_types::{NoteOffEvent, NoteOnEvent};
+use cadenza_ipc::PluginParam;
+use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
+use clack_host::events::event_types::{NoteOffEvent, NoteOnEvent, ParamValueEvent};
 use clack_host::events::{Pckn, io::EventBuffer};
 use clack_host::plugin::PluginInstanceError;
 use clack_host::prelude::{
@@ -53,6 +55,7 @@ use clack_host::prelude::{
     InputEvents, MainThreadHandler, OutputEvents, PluginAudioConfiguration, PluginEntry,
     PluginInstance, SharedHandler, StartedPluginAudioProcessor,
 };
+use clack_host::utils::{ClapId, Cookie};
 
 use crossbeam_channel::{Sender, unbounded};
 use std::collections::HashMap;
@@ -123,6 +126,11 @@ struct LoadOk {
     name:      String,
     processor: StartedPluginAudioProcessor<CadenzaClapHost>,
     main_id:   ClapMainId,
+    /// Parameter list discovered on the `clap-main` thread before the
+    /// processor was started. The plain `Vec<PluginParam>` is `Send`,
+    /// so it crosses back to the control task alongside the processor
+    /// and is forwarded into `LoadedPlugin.params` for the wire protocol.
+    params:    Vec<PluginParam>,
 }
 
 /// Commands the control side can send to `clap-main`. Replies travel back
@@ -243,6 +251,14 @@ fn load_on_main(
     )
     .map_err(|e| HostError::LoadFailed(format!("PluginInstance::new: {e}")))?;
 
+    // Discover parameters before activation. The CLAP `params` extension
+    // is queried via the plugin's main-thread handle — `clap-main` is the
+    // main thread for this instance, so all calls below are spec-legal.
+    // Failures here are logged but non-fatal: a plugin without a `params`
+    // extension simply reports an empty list, which is exactly what
+    // `discover_params` returns on `None`.
+    let params = discover_params(&mut instance);
+
     let configuration = PluginAudioConfiguration {
         sample_rate:      sample_rate as f64,
         min_frames_count: 1,
@@ -261,15 +277,83 @@ fn load_on_main(
     *next_id = next_id.checked_add(1).unwrap_or(1);
     instances.insert(main_id, instance);
 
-    Ok(LoadOk { name: plugin_name, processor, main_id })
+    Ok(LoadOk { name: plugin_name, processor, main_id, params })
+}
+
+/// Cap on the number of parameters we'll enumerate from a single plugin.
+/// Purely defensive — most plugins have well under 100 params; CLAP itself
+/// places no upper bound. Truncating an unusually large list is preferable
+/// to walking 50,000 entries on the `clap-main` thread.
+const MAX_PARAMS_PER_PLUGIN: u32 = 4096;
+
+/// Walk the plugin's `params` extension and produce a `Vec<PluginParam>`.
+/// Always returns a `Vec` — empty if the plugin doesn't expose the
+/// extension or reports zero params. Logs and skips parameters that the
+/// plugin marks as hidden, returns invalid info, or carry an unrepresentable
+/// id. Any per-param failure is contained: the rest of the list still
+/// makes it back to the host.
+fn discover_params(instance: &mut PluginInstance<CadenzaClapHost>) -> Vec<PluginParam> {
+    let Some(params_ext) = instance.plugin_shared_handle().get_extension::<PluginParams>() else {
+        return Vec::new();
+    };
+
+    let mut handle = instance.plugin_handle();
+    let count = params_ext.count(&mut handle);
+    if count == 0 {
+        return Vec::new();
+    }
+    let count = count.min(MAX_PARAMS_PER_PLUGIN);
+    if params_ext.count(&mut handle) > MAX_PARAMS_PER_PLUGIN {
+        tracing::warn!(
+            "CLAP plugin reports {} params; truncating to {}",
+            params_ext.count(&mut handle),
+            MAX_PARAMS_PER_PLUGIN
+        );
+    }
+
+    let mut out = Vec::with_capacity(count as usize);
+    let mut buf = ParamInfoBuffer::new();
+    for index in 0..count {
+        let Some(info) = params_ext.get_info(&mut handle, index, &mut buf) else {
+            tracing::warn!("CLAP plugin returned no info for param index {index}; skipping");
+            continue;
+        };
+        if info.flags.contains(ParamInfoFlags::IS_HIDDEN) {
+            continue;
+        }
+        // `ParamInfo::name`/`module` are NUL-terminated CLAP byte strings.
+        // We trim the trailing NUL and lossy-convert any non-UTF8 to keep
+        // the wire format clean.
+        let name = String::from_utf8_lossy(info.name).trim_end_matches('\0').to_string();
+        out.push(PluginParam {
+            id:          info.id.get(),
+            name,
+            min:         info.min_value as f32,
+            max:         info.max_value as f32,
+            default:     info.default_value as f32,
+            // CLAP exposes a "module" path (e.g. "Oscillators/Wavetable 1")
+            // but no display unit; leave units empty for CLAP plugins.
+            units:       String::new(),
+            // Stepped/enum detection would require walking value-to-text;
+            // not worth it until the UI needs it.
+            step_count:  0,
+            automatable: info.flags.contains(ParamInfoFlags::IS_AUTOMATABLE),
+            modulatable: info.flags.contains(ParamInfoFlags::IS_MODULATABLE),
+        });
+    }
+    out
 }
 
 // ── Public load entry point ─────────────────────────────────────────────────
 
 /// Typed loader: returns a concrete [`ClapInstrument`] alongside the
-/// human-readable plugin name. Used directly by tests; the public
-/// dispatch entry point [`load`] erases this to `InstrumentBox`.
-fn load_typed(path: &Path, sample_rate: u32) -> Result<(ClapInstrument, String), HostError> {
+/// human-readable plugin name and discovered parameter list. Used
+/// directly by tests; the public dispatch entry point [`load`] erases
+/// this to `InstrumentBox`.
+fn load_typed(
+    path: &Path,
+    sample_rate: u32,
+) -> Result<(ClapInstrument, String, Vec<PluginParam>), HostError> {
     let (reply_tx, reply_rx) = unbounded::<Result<LoadOk, HostError>>();
     clap_main_sender()
         .send(ClapCommand::Load {
@@ -279,19 +363,22 @@ fn load_typed(path: &Path, sample_rate: u32) -> Result<(ClapInstrument, String),
         })
         .map_err(|e| HostError::LoadFailed(format!("clap-main channel send: {e}")))?;
 
-    let LoadOk { name, processor, main_id } = reply_rx
+    let LoadOk { name, processor, main_id, params } = reply_rx
         .recv()
         .map_err(|e| HostError::LoadFailed(format!("clap-main reply recv: {e}")))??;
 
-    Ok((ClapInstrument::new(processor, main_id), name))
+    Ok((ClapInstrument::new(processor, main_id), name, params))
 }
 
 /// Load a `.clap` plugin from `path` and return an [`InstrumentBox`] the
 /// audio engine can swap in. Blocks the calling thread on the round-trip
 /// to `clap-main`; expected to be called from `tokio::task::spawn_blocking`.
-pub(super) fn load(path: &Path, sample_rate: u32) -> Result<(InstrumentBox, String), HostError> {
-    let (inst, name) = load_typed(path, sample_rate)?;
-    Ok((Box::new(inst), name))
+pub(super) fn load(
+    path: &Path,
+    sample_rate: u32,
+) -> Result<(InstrumentBox, String, Vec<PluginParam>), HostError> {
+    let (inst, name, params) = load_typed(path, sample_rate)?;
+    Ok((Box::new(inst), name, params))
 }
 
 // ── Audio-thread instrument ─────────────────────────────────────────────────
@@ -358,8 +445,72 @@ impl ClapInstrument {
     /// without going through the audio engine. The `inputs` slice is
     /// treated as interleaved stereo and copied into the input port
     /// verbatim; the returned `Vec` is interleaved stereo output.
+    ///
+    /// The optional `events` slice is staged through the same path the
+    /// audio thread uses in [`render_with_events`]: each `(offset, cmd)`
+    /// is converted into a CLAP event in `self.event_buffer`, then
+    /// consumed by `run_process`. Pass `&[]` for the simple input→output
+    /// case. The buffer is cleared at the top of each call so leftover
+    /// events from a previous test don't bleed into the next one.
     #[cfg(all(test, feature = "clap-host-tests"))]
     pub(crate) fn process_block_for_test(
+        &mut self,
+        inputs: &[f32],
+        frames: usize,
+    ) -> Result<Vec<f32>, String> {
+        self.process_block_with_events_for_test(inputs, frames, &[])
+    }
+
+    /// Variant of [`process_block_for_test`] that lets a test stage
+    /// `AudioCmd` events (notes, parameter changes) before the process
+    /// call. Routes through the same event-staging arms as
+    /// `render_with_events` so the test exercises the production path.
+    #[cfg(all(test, feature = "clap-host-tests"))]
+    pub(crate) fn process_block_with_events_for_test(
+        &mut self,
+        inputs: &[f32],
+        frames: usize,
+        events: &[(u32, AudioCmd)],
+    ) -> Result<Vec<f32>, String> {
+        self.event_buffer.clear();
+        for (offset, cmd) in events.iter().take(EVENT_BUFFER_CAPACITY) {
+            match cmd {
+                AudioCmd::NoteOn { pitch, velocity } => {
+                    let ev = NoteOnEvent::new(
+                        *offset,
+                        Pckn::new(0u16, 0u16, u16::from(*pitch), u32::MAX),
+                        f64::from(*velocity) / 127.0,
+                    );
+                    self.event_buffer.push(&ev);
+                }
+                AudioCmd::NoteOff { pitch } => {
+                    let ev = NoteOffEvent::new(
+                        *offset,
+                        Pckn::new(0u16, 0u16, u16::from(*pitch), u32::MAX),
+                        0.0,
+                    );
+                    self.event_buffer.push(&ev);
+                }
+                AudioCmd::AllNotesOff => {}
+                AudioCmd::ParamSet { param_id, value } => {
+                    if let Some(clap_id) = ClapId::from_raw(*param_id) {
+                        let ev = ParamValueEvent::new(
+                            *offset,
+                            clap_id,
+                            Pckn::match_all(),
+                            f64::from(*value),
+                            Cookie::empty(),
+                        );
+                        self.event_buffer.push(&ev);
+                    }
+                }
+            }
+        }
+        self.process_block_inner(inputs, frames)
+    }
+
+    #[cfg(all(test, feature = "clap-host-tests"))]
+    fn process_block_inner(
         &mut self,
         inputs: &[f32],
         frames: usize,
@@ -487,6 +638,23 @@ impl Instrument for ClapInstrument {
                     // Express as note-off-everything. CLAP's "all sound
                     // off" is a per-channel meta-event; the cheapest
                     // portable approximation is to clear staged events.
+                }
+                AudioCmd::ParamSet { param_id, value } => {
+                    // CLAP `clap_id` is `NonZeroU32` — id 0 is reserved as
+                    // "invalid". Drop the event silently if a caller pushed
+                    // an invalid id; logging here would risk allocation on
+                    // the audio thread (tracing is best-effort RT-safe but
+                    // not guaranteed).
+                    if let Some(clap_id) = ClapId::from_raw(*param_id) {
+                        let ev = ParamValueEvent::new(
+                            *offset,
+                            clap_id,
+                            Pckn::match_all(),
+                            f64::from(*value),
+                            Cookie::empty(),
+                        );
+                        self.event_buffer.push(&ev);
+                    }
                 }
             }
         }
@@ -620,8 +788,15 @@ mod smoke {
         // to `InstrumentBox`) is a one-line wrapper around this same
         // path, so we still cover the full clap-main thread round-trip
         // and the load_on_main → start_processing chain.
-        let (mut clap_inst, name) = load_typed(&path, 48_000).expect("load_typed");
+        let (mut clap_inst, name, params) = load_typed(&path, 48_000).expect("load_typed");
         assert_eq!(name, "Gain");
+        // The nih-plug `gain` example exposes a single `Gain` parameter.
+        // We don't pin the exact id here because it's plugin-defined; the
+        // automation test below uses `params[0].id` directly.
+        assert!(
+            !params.is_empty(),
+            "expected at least one parameter from gain plugin; got empty list"
+        );
 
         // Feed a constant 0.5 stereo input across 256 frames.
         const FRAMES: usize = 256;
@@ -647,5 +822,103 @@ mod smoke {
             .process_block_for_test(&inputs, FRAMES)
             .expect("second process_block_for_test");
         assert!(output2.iter().any(|s| s.abs() > 1e-6));
+    }
+
+    /// End-to-end parameter automation against the gain fixture.
+    ///
+    /// Stages a `ParamSet` event for the gain plugin's single parameter
+    /// at the top of a process block and asserts the audio output level
+    /// changes accordingly. The gain plugin's parameter is normalized
+    /// (CLAP plain values for nih-plug's gain example are in the dB
+    /// range; the smoother spreads any change over many ms), so the test:
+    ///
+    /// 1. Captures a baseline RMS at the default value.
+    /// 2. Drives the parameter to the reported `min` value.
+    /// 3. Renders enough blocks for the smoother to settle.
+    /// 4. Asserts the new RMS is meaningfully smaller than baseline.
+    ///
+    /// We use loose bounds (`< 0.5 * baseline`) rather than exact values
+    /// because nih-plug's smoothing time and the precise dB→linear curve
+    /// are implementation details we don't want to pin.
+    #[test]
+    fn gain_clap_param_automation_changes_output_level() {
+        let path = fixture_path();
+        assert!(path.exists(), "test fixture missing at {}", path.display());
+
+        let (mut clap_inst, _name, params) = load_typed(&path, 48_000).expect("load_typed");
+        assert!(
+            !params.is_empty(),
+            "gain plugin should expose at least one param"
+        );
+        // nih-plug's gain example exposes several params; find the actual
+        // amplitude control by name (case-insensitive contains "gain").
+        // If the name moves we'll see this assertion fire and update the
+        // matcher rather than guessing an index.
+        let gain = params
+            .iter()
+            .find(|p| p.name.to_ascii_lowercase().contains("gain"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "no parameter named 'gain' in plugin params: {:?}",
+                    params.iter().map(|p| &p.name).collect::<Vec<_>>()
+                )
+            });
+        let gain_param_id = gain.id;
+        let gain_min = gain.min;
+
+        const FRAMES: usize = 512;
+        const SETTLE_BLOCKS: usize = 16;
+        let inputs = vec![0.5f32; FRAMES * 2];
+
+        // Helper: average absolute amplitude across a block.
+        let mean_abs = |buf: &[f32]| -> f32 {
+            let sum: f32 = buf.iter().map(|s| s.abs()).sum();
+            sum / buf.len().max(1) as f32
+        };
+
+        // 1. Baseline: render two blocks at default to let any startup
+        //    smoother settle, then capture the second block's level.
+        let _warmup = clap_inst
+            .process_block_for_test(&inputs, FRAMES)
+            .expect("warmup");
+        let baseline_block = clap_inst
+            .process_block_for_test(&inputs, FRAMES)
+            .expect("baseline");
+        let baseline = mean_abs(&baseline_block);
+        assert!(
+            baseline > 1e-4,
+            "baseline level should be audible, got {baseline}"
+        );
+
+        // 2. Stage a single ParamSet at offset 0 driving the parameter to
+        //    its reported minimum. The plugin's smoother takes effect over
+        //    multiple blocks; we drive the param once and then render
+        //    SETTLE_BLOCKS more blocks for the level to converge.
+        let events = [(0u32, AudioCmd::ParamSet { param_id: gain_param_id, value: gain_min })];
+        clap_inst
+            .process_block_with_events_for_test(&inputs, FRAMES, &events)
+            .expect("process with param event");
+
+        // 3. Settle.
+        let mut settled_block = Vec::new();
+        for _ in 0..SETTLE_BLOCKS {
+            settled_block = clap_inst
+                .process_block_for_test(&inputs, FRAMES)
+                .expect("settle");
+        }
+        let settled = mean_abs(&settled_block);
+
+        // 4. Loose bound: the attenuated level should be markedly lower
+        //    than baseline. nih-plug's gain min is typically -30dB which
+        //    yields ~0.03× linear; we assert <50% of baseline to leave
+        //    room for unknown smoother behavior.
+        assert!(
+            settled < 0.5 * baseline,
+            "expected settled level {settled} to be < 50% of baseline {baseline} \
+             after driving gain param to min={gain_min}"
+        );
+        for s in &settled_block {
+            assert!(s.is_finite(), "non-finite sample after automation: {s}");
+        }
     }
 }

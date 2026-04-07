@@ -7,7 +7,7 @@
 //! Messages are JSON-encoded `DaemonMessage` values. The same enum is
 //! used in both directions, mirrored in `cadenza-api/src/daemon-bridge.ts`.
 
-use crate::audio::{AudioCmd, AudioEngine};
+use crate::audio::{AudioCmd, AudioEngine, TimedCmd};
 use crate::host::PluginHost;
 use crate::instrument::{InstrumentBox, BUILTIN_PLUGIN_ID};
 use crate::scheduler;
@@ -231,8 +231,35 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 }
             }
 
-            DaemonMessage::SetParam { .. } => {
-                Some(DaemonMessage::Error("plugin params not yet supported".into()))
+            DaemonMessage::SetParam { plugin_id: _, param_id, value } => {
+                // Parameter automation rides the same SPSC ringbuf as note
+                // events. The active instrument is responsible for routing
+                // the `ParamSet` to its backend's native event format —
+                // CLAP wraps it in a `ParamValueEvent`; PolySynth and the
+                // current VST3 backend silently ignore it.
+                //
+                // Why no `plugin_id` validation: the audio thread always
+                // dispatches events to whichever instrument is currently
+                // installed. If the client sends a `SetParam` for a plugin
+                // that isn't active, the event still flows through but the
+                // installed instrument has no matching `param_id` and
+                // ignores it. Adding a server-side check against
+                // `current_active_id` would tighten this but requires
+                // tracking that state across messages — a follow-up.
+                let Some(engine) = state.engine.clone() else {
+                    let _ = tx
+                        .send(Message::Text(reply(DaemonMessage::Error("audio engine unavailable".into()))))
+                        .await;
+                    continue;
+                };
+                let mut e = engine.lock().await;
+                let frame = e.now_frame();
+                e.send_timed(TimedCmd {
+                    frame,
+                    cmd: AudioCmd::ParamSet { param_id, value },
+                });
+                // Fire-and-forget on success — no reply expected.
+                None
             }
 
             // Outbound-only variants — silently ignore if a client sends them.

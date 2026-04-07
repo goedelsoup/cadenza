@@ -16,11 +16,35 @@ pub type PluginId = u32;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginParam {
+    /// Stable identifier the plugin assigns to this parameter. CLAP exposes
+    /// these as `clap_id` (u32); VST3 uses `ParamID` (also u32-shaped).
     pub id:      u32,
     pub name:    String,
+    /// Minimum and maximum plain values, as reported by the plugin. CLAP
+    /// uses `f64` internally; we store as `f32` to keep the wire shape
+    /// compact and because UI controls don't need the extra precision.
     pub min:     f32,
     pub max:     f32,
     pub default: f32,
+    /// Display unit for the parameter (e.g. "Hz", "dB", "%"). Empty string
+    /// when the plugin doesn't expose one. CLAP doesn't have a dedicated
+    /// units field — for now we leave this empty for CLAP plugins; the
+    /// `module` path is exposed separately if we ever need it.
+    pub units: String,
+    /// `0` for a continuous parameter, `N` for a parameter with `N`
+    /// discrete steps. Currently always `0` for CLAP — distinguishing
+    /// stepped/enum from continuous would mean reading the
+    /// `IS_STEPPED`/`IS_ENUM` flags and walking value-to-text, which is
+    /// more work than the UI demands today.
+    pub step_count: u32,
+    /// `true` if the host can record automation for this parameter.
+    /// Mapped from CLAP's `IS_AUTOMATABLE` flag; VST3 has a similar
+    /// `kCanAutomate` flag (not yet wired). Defaults to `true` when the
+    /// plugin doesn't say otherwise — most params are automatable.
+    pub automatable: bool,
+    /// `true` if the parameter supports continuous modulation (CLAP's
+    /// `IS_MODULATABLE`). VST3 has no equivalent and reports `false`.
+    pub modulatable: bool,
 }
 
 /// Bidirectional message envelope. The same enum is used for both directions
@@ -102,7 +126,17 @@ mod tests {
             DaemonMessage::PluginLoaded {
                 id: 1,
                 name: "Test".into(),
-                params: vec![PluginParam { id: 1, name: "Cutoff".into(), min: 0.0, max: 1.0, default: 0.5 }],
+                params: vec![PluginParam {
+                    id: 1,
+                    name: "Cutoff".into(),
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.5,
+                    units: "Hz".into(),
+                    step_count: 0,
+                    automatable: true,
+                    modulatable: true,
+                }],
             },
             DaemonMessage::PluginUnloaded { id: 1 },
             DaemonMessage::PluginActivated { id: 1 },
