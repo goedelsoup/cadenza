@@ -210,6 +210,7 @@ fn run_vst3_main(rx: crossbeam_channel::Receiver<Vst3Command>) {
 /// Resolves the platform-specific path to the executable inside a `.vst3`
 /// bundle. Currently macOS-only; Linux/Windows return an error so the
 /// failure is explicit rather than silently producing silence.
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn resolve_bundle_binary(bundle_path: &Path) -> Result<PathBuf, HostError> {
     #[cfg(target_os = "macos")]
     {
@@ -263,6 +264,12 @@ const MODULE_ENTRY_SYM: &[u8] = b"bundleEntry";
 
 // ── Synchronous load logic running on vst3-main ─────────────────────────────
 
+// VST3 enum constants are exposed by the `vst3` crate as different
+// integer widths per platform (some targets use `u32`, others `i32`).
+// The `as i32` casts below are required on macOS but become no-ops on
+// Windows; suppressing the unnecessary_cast lint there keeps the code
+// portable without per-call cfg gates.
+#[cfg_attr(not(target_os = "macos"), allow(clippy::unnecessary_cast))]
 fn load_on_main(
     path:        &Path,
     sample_rate: u32,
@@ -624,6 +631,8 @@ impl Vst3Instrument {
     /// invoke the plugin's `process()`. Returns a stringified error on
     /// non-OK tresult — the smoke test surfaces it; the audio path
     /// downgrades it to a `tracing::warn` and silence.
+    // See note on `load_on_main` re: VST3 enum cast portability.
+    #[cfg_attr(not(target_os = "macos"), allow(clippy::unnecessary_cast))]
     fn run_process(&mut self, frames: usize) -> Result<(), String> {
         let mut data = ProcessData {
             processMode:        ProcessModes_::kRealtime as i32,
