@@ -8,6 +8,7 @@
     "build":   "vite build",
     "preview": "vite preview",
     "test":    "vitest run --passWithNoTests",
+    "test:e2e": "playwright test",
     "lint":    "oxlint src"
   },
   "dependencies": {
@@ -28,6 +29,7 @@
     "vite-plugin-top-level-await":   "catalog:",
     "vitest":                        "catalog:",
     "@vitest/ui":                    "catalog:",
+    "@playwright/test":              "catalog:",
     "oxlint":                        "catalog:",
     "typescript":                    "catalog:"
   }
