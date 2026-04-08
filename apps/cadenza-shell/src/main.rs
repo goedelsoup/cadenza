@@ -7,22 +7,31 @@
 //!   a single native window via the platform webview.
 //! - Spawns `cadenza-daemon` as a child process at startup, stores its
 //!   `Child` handle in the Tauri app state, and kills it on window close.
+//! - **Restarts the daemon automatically if it crashes**, with exponential
+//!   backoff (1s → 2s → 4s → 8s → 30s cap) and a rate limit of 5 restarts
+//!   inside any 5-minute window. After a continuous uptime of 60s the
+//!   backoff resets to 1s. State machine and tests live in
+//!   [`supervisor`].
 //! - Adds a system-tray / menu-bar icon with a daemon-status text label
-//!   that polls the child every 1s and reports `running` / `stopped` /
-//!   `crashed (exit N)`.
+//!   that polls the supervisor every 1s and reports `running (pid N)` /
+//!   `restarting (attempt K, backoff Ks)` / `failing repeatedly` /
+//!   `not started`.
 //!
 //! ## What this is NOT
 //!
 //! - Not an auto-updater. Bundle distribution is `cargo tauri build`
 //!   on the user's own machine. Notarization, code-signing, sparkle, etc.
-//!   are explicit Phase 5c work.
+//!   are explicit Phase 5c work and are scoped out of the supervisor.
 //! - Not a custom IPC layer. The web app continues to talk to the daemon
 //!   over its WebSocket bridge (`ws://127.0.0.1:7878`), unchanged. The
 //!   shell is purely additive — `nx run cadenza-web:dev` standalone still
-//!   works exactly as before.
-//! - Not a daemon-restart manager. If the daemon crashes the tray label
-//!   updates but the shell doesn't try to relaunch it. Restart-on-crash
-//!   is Phase 5c.
+//!   works exactly as before. The bridge in
+//!   `packages/cadenza-api/src/daemon-bridge.ts` already does
+//!   exponential-backoff reconnect on `onclose`, so when the supervisor
+//!   respawns the daemon the frontend's header status indicator flips
+//!   from `disconnected` back to `connected` automatically.
+//! - Not a health-checked supervisor. We only observe the OS process
+//!   state (`Child::try_wait`); there is no daemon-side IPC ping.
 //!
 //! ## Daemon binary discovery
 //!
@@ -38,18 +47,20 @@
 //!    Workspace root is detected by walking up from the exe directory
 //!    looking for the `target/` directory.
 //!
-//! If none of the above resolves, the shell logs a warning and continues
-//! without spawning a daemon. The web app's existing Tone.js fallback
-//! kicks in automatically. The user can launch the daemon manually via
-//! `mise run daemon` and the shell will pick it up via the existing
-//! WebSocket bridge — running daemons are entirely transparent to the
-//! shell, since the shell doesn't track WebSocket state.
+//! If none of the above resolves, the supervisor's spawner returns an
+//! `io::Error`, which the supervisor treats as a crash and rate-limits
+//! into `Failing`. The user can launch the daemon manually via
+//! `mise run daemon` and the web app's existing WebSocket bridge will
+//! pick it up — running daemons are entirely transparent to the shell.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod supervisor;
+
+use std::io;
 use std::path::PathBuf;
 use std::process::{Child, Command};
-use std::sync::Mutex;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -57,65 +68,13 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 use tracing_subscriber::EnvFilter;
 
-/// Wraps the supervised child so we can mutate it from multiple Tauri
-/// callbacks (setup, tray menu click, window event, polling task) without
-/// fighting Tauri's `state()` borrow rules.
-struct DaemonSupervisor {
-    child: Mutex<Option<Child>>,
-}
-
-impl DaemonSupervisor {
-    fn new() -> Self {
-        Self { child: Mutex::new(None) }
-    }
-
-    /// Best-effort liveness check. Returns one of:
-    /// - `"not started"` — `spawn_daemon` was never called or failed.
-    /// - `"running"`     — child still has no exit status.
-    /// - `"exited (N)"`  — child finished cleanly with code N.
-    /// - `"signaled"`    — child finished by signal (no exit code on Unix).
-    fn status(&self) -> String {
-        let mut guard = match self.child.lock() {
-            Ok(g) => g,
-            Err(_) => return "lock poisoned".to_string(),
-        };
-        match guard.as_mut() {
-            None => "not started".to_string(),
-            Some(child) => match child.try_wait() {
-                Ok(None) => "running".to_string(),
-                Ok(Some(status)) => match status.code() {
-                    Some(code) => format!("exited ({code})"),
-                    None       => "signaled".to_string(),
-                },
-                Err(e) => format!("query failed: {e}"),
-            },
-        }
-    }
-
-    /// Tear down the supervised child. Idempotent — safe to call from
-    /// both the window-close handler and the global RunEvent::Exit hook
-    /// without double-killing.
-    fn shutdown(&self) {
-        let mut guard = match self.child.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        if let Some(mut child) = guard.take() {
-            // Send SIGKILL on Unix / TerminateProcess on Windows. The
-            // daemon's tokio runtime doesn't install any signal handlers
-            // so a graceful SIGTERM wouldn't be observed anyway.
-            let _ = child.kill();
-            let _ = child.wait();
-            tracing::info!("cadenza-daemon child reaped");
-        }
-    }
-}
+use supervisor::{DaemonSupervisor, Spawner, SupervisorConfig};
 
 /// Walks the discovery order described in the module docs and returns
 /// the first existing path. `None` means the user didn't build the
-/// daemon yet — the shell logs and continues, the web app falls back to
-/// Tone.js, and the user gets the same experience as `nx run cadenza-web:dev`
-/// without `mise run daemon`.
+/// daemon yet — `default_spawner` translates that to an `io::Error` so
+/// the supervisor's restart loop handles it the same way it would a
+/// crash (rate-limited, surfaced in the tray label).
 fn locate_daemon_binary() -> Option<PathBuf> {
     // 1. Env var override.
     if let Some(p) = std::env::var_os("CADENZA_DAEMON_BIN") {
@@ -149,8 +108,7 @@ fn locate_daemon_binary() -> Option<PathBuf> {
         // alongside ours. cargo run -p cadenza-shell on a fresh checkout
         // does NOT also build cadenza-daemon, so this lookup will only
         // succeed when the user has run `cargo build -p cadenza-daemon`
-        // separately (or our shell setup callback has done so on demand,
-        // which is out of scope for v1).
+        // separately.
         if dir.file_name().and_then(|n| n.to_str()) == Some("debug")
             || dir.file_name().and_then(|n| n.to_str()) == Some("release")
         {
@@ -164,30 +122,36 @@ fn locate_daemon_binary() -> Option<PathBuf> {
     None
 }
 
-fn spawn_daemon() -> Option<Child> {
-    let path = locate_daemon_binary()?;
-    tracing::info!("spawning cadenza-daemon from {}", path.display());
-    match Command::new(&path).spawn() {
-        Ok(child) => {
-            tracing::info!("cadenza-daemon child pid {}", child.id());
-            Some(child)
+/// Production spawner: locate the binary, then `Command::new(...).spawn()`.
+/// A missing binary is reported as `NotFound` so the supervisor records
+/// it as a failed attempt rather than silently transitioning to a
+/// "running" state with no child.
+fn default_spawner() -> Spawner {
+    Arc::new(|| -> io::Result<Child> {
+        match locate_daemon_binary() {
+            Some(path) => {
+                tracing::info!("spawning cadenza-daemon from {}", path.display());
+                Command::new(&path).spawn()
+            }
+            None => Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "cadenza-daemon binary not found; build it with `cargo build -p cadenza-daemon` \
+                 or set CADENZA_DAEMON_BIN",
+            )),
         }
-        Err(e) => {
-            tracing::error!("failed to spawn cadenza-daemon at {}: {e}", path.display());
-            None
-        }
-    }
+    })
 }
 
 /// Refresh the tray menu's status item with the supervisor's current
-/// view. Cheap; called once on startup and again from a 1s polling task.
+/// view. Cheap; called once on startup and again from the 1s polling
+/// task immediately after `tick()`.
 fn update_tray_status(app: &AppHandle) {
     let supervisor = app.state::<DaemonSupervisor>();
-    let label = format!("daemon: {}", supervisor.status());
+    let label = supervisor.status_label();
 
     // Tauri 2's MenuItem doesn't expose live text mutation directly —
     // we re-build the menu and assign it to the tray. The menu is small
-    // (3 items) so this is cheap relative to the 1s tick rate.
+    // (2 items) so this is cheap relative to the 1s tick rate.
     let status_item = MenuItemBuilder::with_id("status", &label).enabled(false).build(app);
     let quit_item   = MenuItemBuilder::with_id("quit", "Quit Cadenza").build(app);
     let (Ok(status_item), Ok(quit_item)) = (status_item, quit_item) else {
@@ -214,26 +178,25 @@ fn main() {
         .init();
 
     tauri::Builder::default()
-        .manage(DaemonSupervisor::new())
+        .manage(DaemonSupervisor::new(default_spawner(), SupervisorConfig::default()))
         .setup(|app| {
             // Spawn the daemon child first so the web app's WebSocket
             // bridge has a target by the time the window finishes loading.
-            // `spawn_daemon` returns `Option<Child>`; if it failed to
-            // locate or launch a binary the supervisor stays in its
-            // "not started" state and the tray label says so.
-            let child = spawn_daemon();
-            if child.is_none() {
+            // If `start()` returns false, the supervisor has already
+            // transitioned to `Restarting` (or `Failing`) and the tray
+            // label will reflect that on the next tick.
+            let supervisor = app.state::<DaemonSupervisor>();
+            if !supervisor.start() {
                 tracing::warn!(
-                    "no cadenza-daemon binary found; web app will fall back to Tone.js. \
+                    "initial cadenza-daemon spawn failed; supervisor will retry with backoff. \
                      Build the daemon with `cargo build -p cadenza-daemon` or set CADENZA_DAEMON_BIN."
                 );
             }
-            *app.state::<DaemonSupervisor>().child.lock().expect("supervisor lock") = child;
 
             // Build the tray icon with the initial status. The status
             // string updates from the polling task below; the menu items
             // ids are stable so the click handler can match on them.
-            let initial_status = format!("daemon: {}", app.state::<DaemonSupervisor>().status());
+            let initial_status = supervisor.status_label();
             let status_item = MenuItemBuilder::with_id("status", &initial_status).enabled(false).build(app)?;
             let quit_item   = MenuItemBuilder::with_id("quit", "Quit Cadenza").build(app)?;
             let menu = MenuBuilder::new(app).items(&[&status_item, &quit_item]).build()?;
@@ -255,15 +218,20 @@ fn main() {
                 })
                 .build(app)?;
 
-            // 1s tick to refresh the tray label. Spawn on a plain OS
-            // thread; we don't have tokio in this crate and don't want
-            // to pull it in just for a single sleep loop.
+            // 1s tick to drive the supervisor state machine and refresh
+            // the tray label. Spawn on a plain OS thread; we don't have
+            // tokio in this crate and don't want to pull it in just for
+            // a single sleep loop.
             let app_handle = app.handle().clone();
             std::thread::Builder::new()
-                .name("shell-status-poll".into())
+                .name("shell-supervisor-poll".into())
                 .spawn(move || {
                     loop {
                         std::thread::sleep(Duration::from_secs(1));
+                        // tick() advances the state machine: observes
+                        // crashes, schedules restarts, performs respawns
+                        // when the backoff deadline has been reached.
+                        app_handle.state::<DaemonSupervisor>().tick();
                         update_tray_status(&app_handle);
                     }
                 })
@@ -274,7 +242,9 @@ fn main() {
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
                 // The user closed the main window. Reap the daemon
-                // before Tauri tears down the app handle.
+                // before Tauri tears down the app handle. shutdown()
+                // sets state to NotStarted so the polling thread won't
+                // try to respawn after this point.
                 window.app_handle().state::<DaemonSupervisor>().shutdown();
             }
         })
